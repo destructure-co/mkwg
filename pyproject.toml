@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mkwg"
+authors = [
+    {name = "The mkwg contributors", email = "mkwg@destructure.co"},
+]
+version = "0.1.0"
+description = "Zero config wireguard VPN administration"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+
+[project.scripts]
+mkwg = "__main__:main"
