@@ -1,5 +1,7 @@
 import argparse
+import base64
 import ipaddress
+import urllib.request
 import json
 import os
 import shutil
@@ -7,38 +9,29 @@ import sys
 import subprocess
 from typing import TypedDict
 import wg
-from string import Template
 from pathlib import Path
-from configparser import ConfigParser
-                            
-# TODO: finish this...
-peer_template= Template("""[WireGuardPeer]
-PublicKey=${pubkey}
-PreSharedKeyFile=/etc/systemd/network/wg${network_id}.netdev.d/${peer_id}.psk
-AllowedIPs=10.0.0.3/32
-AllowedIPs=fdc9:281f:04d7:9ee9::3/128
-""")
+from configparser import ConfigParser  
                             
 def gr_opener(path, flags):
     """An opener that sets the file mode to owner=rwx, group=r, other="""
     return os.open(path, flags, mode=0o0640)
 
 class InitOptions(TypedDict):
-    conf_dir: Path
-    ifname: str
+    directory: Path
+    interface: str
     port: int
-    ip_net: ipaddress.IPv4Network | ipaddress.IPv6Network
+    network: ipaddress.IPv4Network | ipaddress.IPv6Network
     force: bool
 
 def init_network(args: InitOptions) -> None:
     """Initialize a new wireguard network"""
 
-    conf_dir: Path = args["directory"]
-    ifname: str = args["interface"]
+    conf_dir = args["directory"]
+    ifname = args["interface"]
     # TODO: find next free port >= 51280 as default if not provided
-    port: int = args["port"]
-    ip_net: ipaddress.IPv4Network | ipaddress.IPv6Network = args["network"]
-    force: bool = args["force"]
+    port = args["port"]
+    ip_net = args["network"]
+    force = args["force"]
 
     if not ip_net.is_private:
         raise Exception(f"Network CIDR {ip_net} is not allocated for private networks (see RFC 1918 / RFC 4193)")
@@ -81,7 +74,6 @@ def init_network(args: InitOptions) -> None:
         "Address": str(ip_net),
     }
 
-    # Write netdev
     with open(conf_dir / f"99-{ifname}.netdev", "w", opener=gr_opener) as fh:
         netdev.write(fh)
         shutil.chown(fh.name, "root", "systemd-network")
@@ -96,51 +88,130 @@ def init_network(args: InitOptions) -> None:
     
     print(" [-] Reloaded systemd-networkd", file=sys.stderr)
 
-# TODO: rewrite this
-def add_peer() -> None:
+class AddOptions(TypedDict):
+    directory: Path
+    interface: str
+    network: ipaddress.IPv4Network | ipaddress.IPv6Network
+    force: bool
+    name: str
+    endpoint: str
+
+def add_peer(args: AddOptions) -> None:
     """Add a wireguard peer to the given network"""
 
-    # TODO: accept option
-    network_id = 0
+    conf_dir = args["directory"]
+    name = args["name"]
+    ip_peer = args["network"]
+    ifname = args["interface"]
+    force = args["force"]
+    endpoint = args["endpoint"]
 
-    # TODO: accept option for peer ID
-    peer_id = "matt-allan"
+    print(f"Creating wireguard peer...", file=sys.stderr)
 
-    dropin_dir = "/etc/systemd/network/99-wg{0}.netdev.d".format(network_id)
+    if not os.access(conf_dir, os.W_OK):
+        raise Exception(f"The directory {conf_dir} is not writeable (try sudo?)") 
 
-    print("Creating wireguard peer {0} on network wg{1}...".format(peer_id, network_id))
+    dropin_dir = conf_dir / f"99-{ifname}.netdev.d"
 
-    private_key = subprocess.run(["wg", "genkey"], check=True, capture_output=True).stdout
+    network_conf = ConfigParser()
+    network_conf.read(conf_dir / f"99-{ifname}.network")
 
-    public_key = subprocess.run(["wg", "pubkey"], input=private_key, check=True, capture_output=True).stdout
+    ip_net = ipaddress.ip_network(network_conf["Network"]["Address"])
 
-    with open(dropin_dir + "/{0}_public.key".format(peer_id), "w", opener=gr_opener) as fh:
-        fh.write(public_key.decode())
+    netdev_conf = ConfigParser()
+    netdev_conf.read(conf_dir / f"99-{ifname}.netdev")
+    srv_key = netdev_conf["WireGuard"]["PrivateKey"]
+    srv_port = netdev_conf["WireGuard"]["ListenPort"]
+
+    if not dropin_dir.exists():
+        dropin_dir.mkdir(0o755, parents=True, exist_ok=True)
+        print(f" [+] Created drop-in directory {dropin_dir.name}", file=sys.stderr)
+
+    if not ip_peer:
+        ips = []
+        for f in dropin_dir.iterdir():
+            if not f.is_file():
+                continue
+            peer_conf = ConfigParser()
+            peer_conf.read(f)
+            ip = peer_conf["WireGuardPeer"]["AllowedIPs"]
+            if ip:
+                ips.append(ipaddress.ip_network(ip))
+        if len(ips) == 0:
+            # Use the first available ip if no peers
+            ip_peer, *_ = ip_net.hosts()
+        else:
+            # TODO: if replacing an existing peer, re-use it's IP?
+            # Otherwise use the last peer's last IP in range + 1
+            *_, last = ips[-1].hosts()
+            ip_peer = last + 1
+
+    key = wg.genkey()
+    pubkey = wg.pubkey(key)
+    psk = wg.genpsk()
+
+    if not name:
+        name = base64.urlsafe_b64encode(base64.b64decode(pubkey)).decode("utf-8")
+    
+    peer = ConfigParser()
+    peer.optionxform = lambda option: option
+    peer["WireGuardPeer"] = {
+        "PublicKey": pubkey,
+        "PresharedKey": psk,
+        "AllowedIPs": str(ip_peer),
+    }
+
+    with open(dropin_dir / f"peer-{name}.conf", "w", opener=gr_opener) as fh:
+        peer.write(fh)
         shutil.chown(fh.name, "root", "systemd-network")
-        print(" [+] Generated public key {0}".format(fh.name))
+        print(f" [+] Created peer {fh.name}", file=sys.stderr)
 
-    with open(dropin_dir + "/peer-{0}.conf".format(peer_id), "w") as fh:
-        fh.write(peer_template.substitute({
-            "pubkey": "",
-            "interface": "",
-            "peer": "",
-        }))
-        print(" [+] Generated drop-in {0}".format(fh.name))
+    subprocess.run(["networkctl", "reload"])
+    
+    print(" [-] Reloaded systemd-networkd", file=sys.stderr)
 
-    # TODO: write conf to stdout, which can be qrencoded with a pipe
+    srv_pubkey = wg.pubkey(srv_key)
+
+    if not endpoint:
+        with urllib.request.urlopen('http://icanhazip.com/') as f:
+            pub_ip = f.read().decode('utf-8').strip()
+            endpoint = f"{pub_ip}:{srv_port}"
+
+    wg_conf = ConfigParser()
+    wg_conf.optionxform = lambda option: option
+    wg_conf["Interface"] = {
+        "PrivateKey": key,
+        "PresharedKey": psk,
+        "Address": str(ip_peer),
+    }
+    wg_conf["Peer"] = {
+        "PublicKey": srv_pubkey,
+        "AllowedIPs": str(ip_net),
+        "Endpoint": endpoint,
+    }
+
+    wg_conf.write(sys.stdout)
 
 def main() -> int:
     """Invoke the command line application and return the exit code"""
-    parser = argparse.ArgumentParser(prog="mkwg")
+    parser = argparse.ArgumentParser(prog="mkwg", description="Manage wireguard networks")
     parser.add_argument("-C", "--directory", help="Root configuration directory", type=Path, default="/etc/systemd/network")
-    parser.add_argument("-f", "--force", help="Force overwriting existing config", action=argparse.BooleanOptionalAction)
     subparsers = parser.add_subparsers(title="command", required=True)
 
     parser_init = subparsers.add_parser('init')
     parser_init.add_argument("-i", "--interface", help="Wireguard interface to create", default="wg0")
     parser_init.add_argument("-p", "--port", help="Wireguard interface listen port", type=int, default=51820)
     parser_init.add_argument("-n", "--network", help="IP network CIDR", type=ipaddress.ip_network, default="172.17.2.0/24")
+    parser_init.add_argument("-f", "--force", help="Force overwriting existing config", action=argparse.BooleanOptionalAction)
     parser_init.set_defaults(func=init_network)
+
+    parser_add = subparsers.add_parser('add')
+    parser_add.add_argument("-i", "--interface", help="Wireguard interface to add peer to", default="wg0")
+    parser_add.add_argument("-n", "--network", help="IP network for peer", type=ipaddress.ip_network)
+    parser_add.add_argument("-f", "--force", help="Force overwriting existing config", action=argparse.BooleanOptionalAction)
+    parser_add.add_argument("-N", "--name", help="Peer name")
+    parser_add.add_argument("-e", "--endpoint", help="Endpoint for peer connection")
+    parser_add.set_defaults(func=add_peer)
 
     args = parser.parse_args()
 

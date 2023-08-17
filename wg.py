@@ -16,7 +16,7 @@ def genkey() -> str:
 
 def pubkey(private_key: str) -> str:
         """Calculates a public key and returns it in base64 from a corresponding private key (generated with genkey) given in base64"""
-        bytes_raw = codecs.encode(private_key, 'utf-8').decode("base64")
+        bytes_raw = codecs.decode(codecs.encode(private_key, 'utf-8'), "base64")
         key = X25519PrivateKey.from_private_bytes(bytes_raw)
 
         pubkey_bytes = key.public_key().public_bytes_raw()
