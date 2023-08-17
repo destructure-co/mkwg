@@ -25,7 +25,7 @@ mkwg ("make wireguard") is a simple CLI tool for creating and managing a Wiregua
 You can download the latest release from the [releases page](https://github.com/destructure-co/mkwg/releases). Once you've downloaded the file, move it somewhere in your `$PATH` and ensure it's executable.
 
 ```
-curl -L https://github.com/destructure-co/releases/download/0.1.0/mkwg
+curl -L -O https://github.com/destructure-co/mkwg/releases/download/v0.1.0/mkwg
 chmod +x mkwg
 sudo mv mkwg /usr/local/bin
 ```
