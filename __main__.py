@@ -158,7 +158,8 @@ def add_peer(args: AddOptions) -> None:
                 ip_nets.append(ipaddress.ip_network(ip))
         if len(ip_nets) == 0:
             # Use the first available ip if no peers
-            ip_peer, *_ = ip_net.hosts()
+            *_, last = ip_net.hosts()
+            ip_peer = last + 1
         else:
             # Otherwise use the last peer's last IP in range + 1
             *_, last = ip_nets[-1].hosts()
