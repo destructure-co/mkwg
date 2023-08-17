@@ -200,11 +200,11 @@ def add_peer(args: AddOptions) -> None:
     wg_conf.optionxform = lambda option: option
     wg_conf["Interface"] = {
         "PrivateKey": key,
-        "PresharedKey": psk,
         "Address": str(ipaddress.ip_network(ip_peer)),
     }
     wg_conf["Peer"] = {
         "PublicKey": srv_pubkey,
+        "PresharedKey": psk,
         "AllowedIPs": str(ip_net),
         "Endpoint": endpoint,
     }
