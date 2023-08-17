@@ -16,7 +16,7 @@ def genkey() -> str:
     bytes = key.private_bytes(
         Encoding.Raw,
         PrivateFormat.Raw,
-        NoEncryption,
+        NoEncryption(),
     )
 
     return codecs.encode(bytes, "base64").decode("utf-8").strip()
