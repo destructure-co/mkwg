@@ -27,7 +27,7 @@ You can download the latest release from the [releases page](https://github.com/
 ```
 curl -L https://github.com/destructure-co/releases/download/0.1.0/mkwg
 chmod +x mkwg
-mv mkwg /usr/local/bin
+sudo mv mkwg /usr/local/bin
 ```
 
 ## Usage
