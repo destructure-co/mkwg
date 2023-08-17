@@ -31,7 +31,6 @@ def init_network(args: InitOptions) -> None:
 
     conf_dir = args["directory"]
     ifname = args["interface"]
-    # TODO: find next free port >= 51280 as default if not provided
     port = args["port"]
     ip_net = args["network"]
     force = args["force"]
@@ -63,6 +62,9 @@ def init_network(args: InitOptions) -> None:
 
     private_key = wg.genkey()
 
+    # Use the first IP as the host
+    wg_ip, *_ = ip_net.hosts()
+
     netdev = ConfigParser()
     netdev.optionxform = lambda option: option
     netdev["NetDev"] = {
@@ -82,16 +84,20 @@ def init_network(args: InitOptions) -> None:
         "Name": ifname,
     }
     network["Network"] = {
-        "Address": str(ip_net),
+        "Address": str(ipaddress.ip_network(wg_ip)),
+    }
+    network["Route"] = {
+        "Gateway": str(wg_ip),
+        "Destination": str(ip_net),
     }
 
     with open(conf_dir / f"99-{ifname}.netdev", "w", opener=gr_opener) as fh:
-        netdev.write(fh)
+        netdev.write(fh, space_around_delimiters=False)
         shutil.chown(fh.name, "root", "systemd-network")
         print(f" [+] Created virtual network device {fh.name}", file=sys.stderr)
 
     with open(conf_dir / f"99-{ifname}.network", "w", opener=gr_opener) as fh:
-        network.write(fh)
+        network.write(fh, space_around_delimiters=False)
         shutil.chown(fh.name, "root", "systemd-network")
         print(f" [+] Created virtual network interface {fh.name}", file=sys.stderr)
 
@@ -141,7 +147,7 @@ def add_peer(args: AddOptions) -> None:
         print(f" [+] Created drop-in directory {dropin_dir.name}", file=sys.stderr)
 
     if not ip_peer:
-        ips = []
+        ip_nets = []
         for f in dropin_dir.iterdir():
             if not f.is_file():
                 continue
@@ -149,14 +155,13 @@ def add_peer(args: AddOptions) -> None:
             peer_conf.read(f)
             ip = peer_conf["WireGuardPeer"]["AllowedIPs"]
             if ip:
-                ips.append(ipaddress.ip_network(ip))
-        if len(ips) == 0:
+                ip_nets.append(ipaddress.ip_network(ip))
+        if len(ip_nets) == 0:
             # Use the first available ip if no peers
             ip_peer, *_ = ip_net.hosts()
         else:
-            # TODO: if replacing an existing peer, re-use it's IP?
             # Otherwise use the last peer's last IP in range + 1
-            *_, last = ips[-1].hosts()
+            *_, last = ip_nets[-1].hosts()
             ip_peer = last + 1
 
     key = wg.genkey()
@@ -171,11 +176,11 @@ def add_peer(args: AddOptions) -> None:
     peer["WireGuardPeer"] = {
         "PublicKey": pubkey,
         "PresharedKey": psk,
-        "AllowedIPs": str(ip_peer),
+        "AllowedIPs": str(ipaddress.ip_network(ip_peer)),
     }
 
     with open(dropin_dir / f"peer-{name}.conf", "w", opener=gr_opener) as fh:
-        peer.write(fh)
+        peer.write(fh, space_around_delimiters=False)
         shutil.chown(fh.name, "root", "systemd-network")
         print(f" [+] Created peer {fh.name}", file=sys.stderr)
 
@@ -195,7 +200,7 @@ def add_peer(args: AddOptions) -> None:
     wg_conf["Interface"] = {
         "PrivateKey": key,
         "PresharedKey": psk,
-        "Address": str(ip_peer),
+        "Address": str(ipaddress.ip_network(ip_peer)),
     }
     wg_conf["Peer"] = {
         "PublicKey": srv_pubkey,
@@ -203,7 +208,7 @@ def add_peer(args: AddOptions) -> None:
         "Endpoint": endpoint,
     }
 
-    wg_conf.write(sys.stdout)
+    wg_conf.write(sys.stdout, space_around_delimiters=False)
 
 
 def main() -> int:
