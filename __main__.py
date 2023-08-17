@@ -10,11 +10,13 @@ import subprocess
 from typing import TypedDict
 import wg
 from pathlib import Path
-from configparser import ConfigParser  
-                            
+from configparser import ConfigParser
+
+
 def gr_opener(path, flags):
     """An opener that sets the file mode to owner=rwx, group=r, other="""
     return os.open(path, flags, mode=0o0640)
+
 
 class InitOptions(TypedDict):
     directory: Path
@@ -22,6 +24,7 @@ class InitOptions(TypedDict):
     port: int
     network: ipaddress.IPv4Network | ipaddress.IPv6Network
     force: bool
+
 
 def init_network(args: InitOptions) -> None:
     """Initialize a new wireguard network"""
@@ -34,19 +37,27 @@ def init_network(args: InitOptions) -> None:
     force = args["force"]
 
     if not ip_net.is_private:
-        raise Exception(f"Network CIDR {ip_net} is not allocated for private networks (see RFC 1918 / RFC 4193)")
+        raise Exception(
+            f"Network CIDR {ip_net} is not allocated for private networks (see RFC 1918 / RFC 4193)"
+        )
 
     if not os.access(conf_dir, os.W_OK):
-        raise Exception(f"The directory {conf_dir} is not writeable (try sudo?)") 
+        raise Exception(f"The directory {conf_dir} is not writeable (try sudo?)")
 
     # Reload first to catch any new config files
     subprocess.run(["networkctl", "reload"], check=True)
 
-    links = json.loads(subprocess.run(["networkctl", "list", "--json", "short"], capture_output=True).stdout)
+    links = json.loads(
+        subprocess.run(
+            ["networkctl", "list", "--json", "short"], capture_output=True
+        ).stdout
+    )
 
     for iface in links["Interfaces"]:
         if iface["Name"] == ifname and not force:
-            raise Exception(f"The interface {ifname} already exists (use --force to overwrite)")
+            raise Exception(
+                f"The interface {ifname} already exists (use --force to overwrite)"
+            )
 
     print(f"Creating wireguard network {ifname}...", file=sys.stderr)
 
@@ -85,8 +96,9 @@ def init_network(args: InitOptions) -> None:
         print(f" [+] Created virtual network interface {fh.name}", file=sys.stderr)
 
     subprocess.run(["networkctl", "reload"])
-    
+
     print(" [-] Reloaded systemd-networkd", file=sys.stderr)
+
 
 class AddOptions(TypedDict):
     directory: Path
@@ -95,6 +107,7 @@ class AddOptions(TypedDict):
     force: bool
     name: str
     endpoint: str
+
 
 def add_peer(args: AddOptions) -> None:
     """Add a wireguard peer to the given network"""
@@ -109,7 +122,7 @@ def add_peer(args: AddOptions) -> None:
     print(f"Creating wireguard peer...", file=sys.stderr)
 
     if not os.access(conf_dir, os.W_OK):
-        raise Exception(f"The directory {conf_dir} is not writeable (try sudo?)") 
+        raise Exception(f"The directory {conf_dir} is not writeable (try sudo?)")
 
     dropin_dir = conf_dir / f"99-{ifname}.netdev.d"
 
@@ -152,7 +165,7 @@ def add_peer(args: AddOptions) -> None:
 
     if not name:
         name = base64.urlsafe_b64encode(base64.b64decode(pubkey)).decode("utf-8")
-    
+
     peer = ConfigParser()
     peer.optionxform = lambda option: option
     peer["WireGuardPeer"] = {
@@ -167,14 +180,14 @@ def add_peer(args: AddOptions) -> None:
         print(f" [+] Created peer {fh.name}", file=sys.stderr)
 
     subprocess.run(["networkctl", "reload"])
-    
+
     print(" [-] Reloaded systemd-networkd", file=sys.stderr)
 
     srv_pubkey = wg.pubkey(srv_key)
 
     if not endpoint:
-        with urllib.request.urlopen('http://icanhazip.com/') as f:
-            pub_ip = f.read().decode('utf-8').strip()
+        with urllib.request.urlopen("http://icanhazip.com/") as f:
+            pub_ip = f.read().decode("utf-8").strip()
             endpoint = f"{pub_ip}:{srv_port}"
 
     wg_conf = ConfigParser()
@@ -192,23 +205,56 @@ def add_peer(args: AddOptions) -> None:
 
     wg_conf.write(sys.stdout)
 
+
 def main() -> int:
     """Invoke the command line application and return the exit code"""
-    parser = argparse.ArgumentParser(prog="mkwg", description="Manage wireguard networks")
-    parser.add_argument("-C", "--directory", help="Root configuration directory", type=Path, default="/etc/systemd/network")
+    parser = argparse.ArgumentParser(
+        prog="mkwg", description="Manage wireguard networks"
+    )
+    parser.add_argument(
+        "-C",
+        "--directory",
+        help="Root configuration directory",
+        type=Path,
+        default="/etc/systemd/network",
+    )
     subparsers = parser.add_subparsers(title="command", required=True)
 
-    parser_init = subparsers.add_parser('init')
-    parser_init.add_argument("-i", "--interface", help="Wireguard interface to create", default="wg0")
-    parser_init.add_argument("-p", "--port", help="Wireguard interface listen port", type=int, default=51820)
-    parser_init.add_argument("-n", "--network", help="IP network CIDR", type=ipaddress.ip_network, default="172.17.2.0/24")
-    parser_init.add_argument("-f", "--force", help="Force overwriting existing config", action=argparse.BooleanOptionalAction)
+    parser_init = subparsers.add_parser("init")
+    parser_init.add_argument(
+        "-i", "--interface", help="Wireguard interface to create", default="wg0"
+    )
+    parser_init.add_argument(
+        "-p", "--port", help="Wireguard interface listen port", type=int, default=51820
+    )
+    parser_init.add_argument(
+        "-n",
+        "--network",
+        help="IP network CIDR",
+        type=ipaddress.ip_network,
+        default="172.17.2.0/24",
+    )
+    parser_init.add_argument(
+        "-f",
+        "--force",
+        help="Force overwriting existing config",
+        action=argparse.BooleanOptionalAction,
+    )
     parser_init.set_defaults(func=init_network)
 
-    parser_add = subparsers.add_parser('add')
-    parser_add.add_argument("-i", "--interface", help="Wireguard interface to add peer to", default="wg0")
-    parser_add.add_argument("-n", "--network", help="IP network for peer", type=ipaddress.ip_network)
-    parser_add.add_argument("-f", "--force", help="Force overwriting existing config", action=argparse.BooleanOptionalAction)
+    parser_add = subparsers.add_parser("add")
+    parser_add.add_argument(
+        "-i", "--interface", help="Wireguard interface to add peer to", default="wg0"
+    )
+    parser_add.add_argument(
+        "-n", "--network", help="IP network for peer", type=ipaddress.ip_network
+    )
+    parser_add.add_argument(
+        "-f",
+        "--force",
+        help="Force overwriting existing config",
+        action=argparse.BooleanOptionalAction,
+    )
     parser_add.add_argument("-N", "--name", help="Peer name")
     parser_add.add_argument("-e", "--endpoint", help="Endpoint for peer connection")
     parser_add.set_defaults(func=add_peer)
@@ -221,6 +267,7 @@ def main() -> int:
     except Exception as e:
         print("Error: ", e, file=sys.stderr)
         return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())
